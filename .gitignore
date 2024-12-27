@@ -1,0 +1,15 @@
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.gif
+*.tiff
+
+*.csv
+*.pth
+
+# keep folder
+!*/
+
+/result/output_csv/*
+!/result/output_csv/.gitkeep
