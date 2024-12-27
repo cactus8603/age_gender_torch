@@ -1,9 +1,21 @@
+# img
 *.jpg
 *.jpeg
 *.png
 *.bmp
 *.gif
 *.tiff
+
+# files
+*.txt
+*.zip
+*.tar
+*.pyc
+*.db
+*.whl
+
+# tensorboard events
+*.tfevents.*
 
 *.csv
 *.pth
