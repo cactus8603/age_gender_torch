@@ -10,8 +10,17 @@ from tqdm import tqdm
 from dataset import get_dataloader
 from model import TimmAgeGenderModel
 
+import torch.optim.lr_scheduler as lr_scheduler
+
 # Training Loop
-def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, scaler, writer, num_epochs=200):
+def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, scaler, scheduler, writer, num_epochs=200):
+
+    # load_state = True
+    # filename = './checkpoints/checkpoint_epoch_190.pth.tar'
+    # if load_state:
+    #     model.load_checkpoint(filename, optimizer, scaler)
+    #     print('Load pretrained model successful')
+
     start_epoch = 0
     checkpoint_path = "./checkpoints/checkpoint.pth.tar"
 
@@ -40,7 +49,7 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
 
             # Add progress bar using tqdm
             with tqdm(total=len(dataloaders[phase]), desc=f"{phase} Epoch {epoch+1}/{num_epochs}") as pbar:
-                for inputs, gender_labels, age_labels in dataloaders[phase]:
+                for batch_idx, (inputs, gender_labels, age_labels) in enumerate(dataloaders[phase]):
                     inputs = inputs.to(device)
                     gender_labels = gender_labels.to(device)  # Gender labels
                     age_labels = age_labels.float().to(device)  # Age labels
@@ -60,6 +69,10 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
                         scaler.step(optimizer)
                         scaler.update()
 
+                        # 记录当前的学习率
+                        current_lr = optimizer.param_groups[0]['lr']
+                        writer.add_scalar("Learning Rate/train", current_lr, epoch * len(dataloaders[phase]) + batch_idx)
+
                     # Statistics
                     running_loss += loss.item() * inputs.size(0)
                     _, preds = torch.max(gender_logits, 1)
@@ -75,23 +88,24 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
 
             print(f"{phase} Loss: {epoch_loss:.4f} Gender Acc: {epoch_acc_gender:.4f} Age Loss: {epoch_loss_age:.4f}")
 
-            # Write to TensorBoard
+            # Write metrics to TensorBoard
             writer.add_scalar(f"{phase} Loss", epoch_loss, epoch)
             writer.add_scalar(f"{phase} Gender Accuracy", epoch_acc_gender, epoch)
             writer.add_scalar(f"{phase} Age Loss", epoch_loss_age, epoch)
 
             # Save checkpoint
             if phase == 'val' and (best_epoch_loss >= epoch_loss or best_acc_gender < epoch_acc_gender):
+                if best_epoch_loss >= epoch_loss: best_epoch_loss = epoch_loss
+                if best_acc_gender < epoch_acc_gender: best_acc_gender = epoch_acc_gender
                 model.save_checkpoint(optimizer, scaler, epoch + 1, filename=checkpoint_path)
+
+        # Step Scheduler
+        scheduler.step()
 
     print("Training complete")
     writer.close()
 
-
 if __name__ == '__main__':
-
-    # TensorBoard Setup
-    # writer = SummaryWriter(log_dir="./runs/age_gender_model")
 
     # Training Configuration
     model = TimmAgeGenderModel(model_name='mobilenetv3_small_100')
@@ -105,10 +119,8 @@ if __name__ == '__main__':
     }
     print('Load dataloader successful')
 
-    # criterion_gender = nn.CrossEntropyLoss()
-    # criterion_age = nn.MSELoss()
-    # optimizer = optim.Adam(model.parameters(), lr=0.001)
-    # scaler = GradScaler()
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=20, eta_min=1e-7)  # Cosine Annealing
 
     # 调用 train_model 函数
     train_model(
@@ -116,17 +128,9 @@ if __name__ == '__main__':
         dataloaders=dataloaders,
         criterion_gender=nn.CrossEntropyLoss(),
         criterion_age=nn.MSELoss(),
-        optimizer=optim.Adam(model.parameters(), lr=1e-3),
+        optimizer=optimizer,
         scaler=GradScaler(),
+        scheduler=scheduler,
         writer=SummaryWriter(log_dir="logs"),
         num_epochs=200
     )
-
-    # train_model(
-    #     model, 
-    #     dataloaders, 
-    #     criterion_gender, 
-    #     criterion_age, 
-    #     optimizer, 
-    #     scaler, 
-    #     writer)

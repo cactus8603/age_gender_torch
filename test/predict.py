@@ -15,16 +15,18 @@ from model import TimmAgeGenderModel
 # 定义前处理的 transforms
 transform = transforms.Compose([
     transforms.ToPILImage(),  # 将 numpy.ndarray 转为 PIL.Image
-    transforms.Resize(224),  # 调整大小为 224x224
+    transforms.Resize(256),  # 调整大小为 224x224
     transforms.ToTensor(),  # 转为 PyTorch Tensor
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # 标准化
 ])
 
 # 加载自定义的年龄性别预测模型
 def init_age_gender_model():
-    age_gender_model = TimmAgeGenderModel()
-    checkpoint = torch.load('../checkpoints/0.8.13/checkpoint_epoch_109.pth.tar', map_location='cuda')
-    age_gender_model.load_state_dict(checkpoint["state_dict"])
+    age_gender_model = TimmAgeGenderModel(model_name='mobilenetv3_small_100')
+    age_gender_model.load_checkpoint('../checkpoints/checkpoint_epoch_109.pth.tar')
+    # checkpoint = torch.load('../checkpoints/0.8.13/checkpoint_epoch_109.pth.tar', map_location='cuda')
+    # checkpoint = torch.load('../checkpoints/checkpoint_epoch_1.pth.tar', map_location='cuda')
+    # age_gender_model.load_state_dict(checkpoint["state_dict"], strict=False)
     age_gender_model.eval().to('cuda')
     print('Load Pretrained Model Successful')
     return age_gender_model
@@ -66,6 +68,7 @@ def process_images_from_csv(csv_path, model):
 
             # 性别和年龄预测
             with torch.no_grad():
+                # print(face_tensor.shape)
                 gender_logits, age_logits = model(face_tensor)
                 gender = torch.argmax(gender_logits).item()
                 age = age_logits.item()

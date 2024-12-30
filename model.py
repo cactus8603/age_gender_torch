@@ -4,11 +4,17 @@ import timm
 
 # Model Definition
 class TimmAgeGenderModel(nn.Module):
-    def __init__(self, model_name='mobilenetv4_conv_small.e2400_r224_in1k', hidden_size=256, dropout_rate=0.5, num_classes_gender=2, num_classes_age=1):
+    def __init__(self, model_name='mobilenetv3_small_100.lamb_in1k', hidden_size=128, dropout_rate=0.2, num_classes_gender=2, num_classes_age=1):
         super(TimmAgeGenderModel, self).__init__()
-        self.backbone = timm.create_model(model_name, pretrained=True, num_classes=0)
+        self.backbone = timm.create_model(model_name, pretrained=False, num_classes=0)
         
-        in_features = 1024 # self.backbone.num_features
+        # in_features = self.backbone.num_features
+        # 动态获取 in_features
+        with torch.no_grad():
+            dummy_input = torch.randn(1, 3, 256, 256)  # 假设输入图像大小为 224x224
+            dummy_features = self.backbone(dummy_input)
+            in_features = dummy_features.shape[1]
+        
 
         # Gender classification head
         self.gender_head = nn.Sequential(
@@ -37,7 +43,8 @@ class TimmAgeGenderModel(nn.Module):
     def save_checkpoint(self, optimizer, scaler, epoch, filename="checkpoint.pth.tar"):
         filename = filename.replace(".pth.tar", f"_epoch_{epoch}.pth.tar")
         torch.save({
-            'state_dict': self.state_dict(),
+            # 'state_dict': self.state_dict(),
+            'model': self,
             'optimizer': optimizer.state_dict(),
             'scaler': scaler.state_dict(),
             'epoch': epoch
@@ -47,10 +54,18 @@ class TimmAgeGenderModel(nn.Module):
     @classmethod
     def load_checkpoint(cls, filename, optimizer=None, scaler=None):
         checkpoint = torch.load(filename)
-        model = cls()
-        model.load_state_dict(checkpoint['state_dict'])
-        if optimizer:
+
+        # 加载整个模型
+        model = checkpoint['model']
+        model.eval()  # 如果用于推理，切换到评估模式
+
+        # 加载优化器状态（如果提供）
+        if optimizer and 'optimizer' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
-        if scaler:
+
+        # 加载混合精度状态（如果提供）
+        if scaler and 'scaler' in checkpoint:
             scaler.load_state_dict(checkpoint['scaler'])
-        return model, checkpoint['epoch']
+
+        # 返回模型和起始 epoch
+        return model, checkpoint.get('epoch', 0)
