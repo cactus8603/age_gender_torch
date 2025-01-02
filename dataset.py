@@ -44,6 +44,12 @@ class AgeGenderDataset(Dataset):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = cv2.resize(image, (224, 224))
 
+        # 转换为 one-hot 向量
+        if gender_label == 1:  # 男性
+            gender_label_onehot = [1.0, 0.0]
+        else:  # 女性
+            gender_label_onehot = [0.0, 1.0]
+
         # Apply transformations
         if self.transform:
             image = self.transform(image)
@@ -106,8 +112,8 @@ data_transforms = {
     'train': transforms.Compose([
         transforms.ToPILImage(),  # 将 numpy.ndarray 转为 PIL.Image
         transforms.Resize(256),
-        transforms.RandomHorizontalFlip(),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+        # transforms.RandomHorizontalFlip(),
+        # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ]),
@@ -128,8 +134,8 @@ def get_dataloader():
     val_dataset = AgeGenderDataset(val_data, transform=data_transforms['val'])
 
     # Create DataLoaders
-    train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=256, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False, num_workers=4)
 
     # # Example usage
     # for images, gender_labels, age_labels in train_loader:
