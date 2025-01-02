@@ -14,22 +14,26 @@ class TimmAgeGenderModel(nn.Module):
             dummy_input = torch.randn(1, 3, 256, 256)  # 假设输入图像大小为 224x224
             dummy_features = self.backbone(dummy_input)
             in_features = dummy_features.shape[1]
-        
 
         # Gender classification head
         self.gender_head = nn.Sequential(
             nn.Linear(in_features, hidden_size),
             nn.ReLU(),
-            nn.Dropout(dropout_rate),  # 添加 Dropout
-            nn.Linear(hidden_size, num_classes_gender),
+            nn.Dropout(dropout_rate),
+            nn.Linear(hidden_size, hidden_size // 2),  # 增加一层隐藏层
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(hidden_size // 2, num_classes_gender),
+            # nn.Sigmoid()
         )
 
         # Age regression head
         self.age_head = nn.Sequential(
             nn.Linear(in_features, hidden_size),
             nn.ReLU(),
-            nn.Dropout(dropout_rate),  # 添加 Dropout
+            nn.Dropout(dropout_rate),
             nn.Linear(hidden_size, num_classes_age),
+            nn.Sigmoid()  # 输出在 [0, 1]
         )
 
     def forward(self, x):
