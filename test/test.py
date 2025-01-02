@@ -29,10 +29,12 @@ transform = transforms.Compose([
 # 加载自定义的年龄性别预测模型
 def init_age_gender_model():
     age_gender_model = TimmAgeGenderModel(model_name='mobilenetv3_small_100')
-    age_gender_model.load_checkpoint('../checkpoints/checkpoint_epoch_11.pth.tar')
-    # checkpoint = torch.load('../checkpoints/0.8.13/checkpoint_epoch_109.pth.tar', map_location='cuda')
+    age_gender_model, _ = age_gender_model.load_checkpoint('../checkpoints/checkpoint_epoch_82.pth')
+
+    # checkpoint = torch.load('../checkpoints/checkpoint_epoch_82.pth', map_location='cuda')
+    # age_gender_model = checkpoint['model']
     # checkpoint = torch.load('../checkpoints/checkpoint_epoch_1.pth.tar', map_location='cuda')
-    # age_gender_model.load_state_dict(checkpoint["state_dict"], strict=False)
+    # age_gender_model.load_state_dict(checkpoint["model"], strict=True)
 
     for name, param in age_gender_model.gender_head.named_parameters():
         print(f"Gender Head - Parameter: {name}, Requires Grad: {param.requires_grad}")
@@ -68,9 +70,10 @@ def process_images_from_csv(img_path, model):
         gender_logits, age_logits = model(face_tensor)
         # gender = torch.argmax(gender_logits).item()
         # 使用 Softmax 将 logits 转换为概率分布
-        gender_probs = F.softmax(gender_logits, dim=-1)  # 计算性别分类的概率
+        gender_probs = torch.softmax(gender_logits, dim=-1)  # 计算性别分类的概率
         gender = torch.argmax(gender_probs).item()  # 选择概率最高的类别（0 或 1）
         age = age_logits.item()
+        print(gender_probs)
 
 
     print('predicted_gender:{}, predicted_age:{}'.format(gender, age))

@@ -15,7 +15,7 @@ def init_rtmpose_model():
 # 加载自定义的年龄性别预测模型
 def init_age_gender_model():
     age_gender_model = TimmAgeGenderModel()
-    checkpoint = torch.load('./checkpoints/0.8.13/checkpoint_epoch_74.pth.tar', map_location='cuda')
+    checkpoint = torch.load('./checkpoints/0.8.13/checkpoint_epoch_74.pth', map_location='cuda')
     age_gender_model.load_state_dict(checkpoint["state_dict"])
     age_gender_model.eval().to('cuda')
     print('Load Pretrained Model Successful')

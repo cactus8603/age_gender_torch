@@ -44,11 +44,11 @@ class TimmAgeGenderModel(nn.Module):
         return gender_logits, age_logits
 
     # Save model checkpoint
-    def save_checkpoint(self, optimizer, scaler, epoch, filename="checkpoint.pth.tar"):
-        filename = filename.replace(".pth.tar", f"_epoch_{epoch}.pth.tar")
+    def save_checkpoint(self, optimizer, scaler, epoch, filename="checkpoint.pth"):
+        filename = filename.replace(".pth", f"_epoch_{epoch}.pth")
         torch.save({
-            # 'state_dict': self.state_dict(),
-            'model': self,
+            'state_dict': self.state_dict(),
+            # 'model': self,
             'optimizer': optimizer.state_dict(),
             'scaler': scaler.state_dict(),
             'epoch': epoch
@@ -56,11 +56,13 @@ class TimmAgeGenderModel(nn.Module):
 
     # Load model checkpoint
     @classmethod
-    def load_checkpoint(cls, filename, optimizer=None, scaler=None):
-        checkpoint = torch.load(filename)
+    def load_checkpoint(cls, filename, optimizer=None, scaler=None, device=None):
+        checkpoint = torch.load(filename, map_location='cuda')
 
         # 加载整个模型
+        model = cls()
         model = checkpoint['model']
+        # model.load_state_dict(checkpoint['state_dict'])
         model.eval()  # 如果用于推理，切换到评估模式
 
         # 加载优化器状态（如果提供）
@@ -72,4 +74,4 @@ class TimmAgeGenderModel(nn.Module):
             scaler.load_state_dict(checkpoint['scaler'])
 
         # 返回模型和起始 epoch
-        return model, checkpoint.get('epoch', 0)
+        return model , checkpoint.get('epoch', 0)

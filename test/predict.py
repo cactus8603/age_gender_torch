@@ -26,8 +26,8 @@ transform = transforms.Compose([
 # 加载自定义的年龄性别预测模型
 def init_age_gender_model():
     age_gender_model = TimmAgeGenderModel(model_name='mobilenetv3_small_100')
-    age_gender_model.load_checkpoint('../checkpoints/checkpoint_epoch_190.pth.tar')
-    # checkpoint = torch.load('../checkpoints/0.8.13/checkpoint_epoch_109.pth.tar', map_location='cuda')
+    age_gender_model, _ = age_gender_model.load_checkpoint('../checkpoints/checkpoint_epoch_70.pth')
+    # checkpoint = torch.load('../checkpoints/0.8.13/checkpoint_epoch_109.pth', map_location='cuda')
     # checkpoint = torch.load('../checkpoints/checkpoint_epoch_1.pth.tar', map_location='cuda')
     # age_gender_model.load_state_dict(checkpoint["state_dict"], strict=False)
     age_gender_model.eval().to('cuda')
@@ -108,10 +108,10 @@ def process_images_from_csv(csv_path, model):
                 'y': y,
                 'w': w,
                 'h': h,
-                'predicted_gender':  'M' if gender == 1 else 'F', # '1' if gender == 1 else '0',  #
+                'predicted_gender': '1' if gender == 1 else '0',  #  'M' if gender == 1 else 'F', 
                 'predicted_age': age * 100
             })
-            print('predicted_gender:{}, predicted_age:{}'.format(gender, age))
+            # print('predicted_gender:{}, predicted_age:{}'.format(gender, age))
 
             # 更新进度条
             pbar.update(1)
