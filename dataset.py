@@ -111,17 +111,22 @@ class AgeGenderDataset(Dataset):
 data_transforms = {
     'train': transforms.Compose([
         transforms.ToPILImage(),  # 将 numpy.ndarray 转为 PIL.Image
-        transforms.Resize(256),
-        # transforms.RandomHorizontalFlip(),
-        # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        transforms.Resize(256),  # 调整大小到 256
+        transforms.RandomHorizontalFlip(),  # 随机水平翻转
+        transforms.ColorJitter(
+            brightness=32.0 / 255.0,  # 随机亮度调整
+            contrast=(0.6, 1.4),  # 随机对比度调整
+            saturation=(0.6, 1.4),  # 随机饱和度调整
+            hue=0.1  # 随机色调调整
+        ),
+        transforms.ToTensor(),  # 转为 PyTorch 张量
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # 标准化
     ]),
     'val': transforms.Compose([
         transforms.ToPILImage(),  # 将 numpy.ndarray 转为 PIL.Image
-        transforms.Resize(256),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        transforms.Resize(256),  # 调整大小到 256
+        transforms.ToTensor(),  # 转为 PyTorch 张量
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # 标准化
     ]),
 }
 
@@ -134,8 +139,8 @@ def get_dataloader():
     val_dataset = AgeGenderDataset(val_data, transform=data_transforms['val'])
 
     # Create DataLoaders
-    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=4)
 
     # # Example usage
     # for images, gender_labels, age_labels in train_loader:
