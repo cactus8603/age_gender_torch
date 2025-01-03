@@ -4,7 +4,7 @@ import timm
 
 # Model Definition
 class TimmAgeGenderModel(nn.Module):
-    def __init__(self, model_name='mobilenetv3_small_100.lamb_in1k', hidden_size=128, dropout_rate=0.2, num_classes_gender=2, num_classes_age=1):
+    def __init__(self, model_name='mobilenetv3_small_100.lamb_in1k', hidden_size=256, dropout_rate=0.5, num_classes_gender=2, num_classes_age=1):
         super(TimmAgeGenderModel, self).__init__()
         self.backbone = timm.create_model(model_name, pretrained=False, num_classes=0)
         
@@ -61,8 +61,8 @@ class TimmAgeGenderModel(nn.Module):
 
         # 加载整个模型
         model = cls()
-        model = checkpoint['model']
-        # model.load_state_dict(checkpoint['state_dict'])
+        # model = checkpoint['model']
+        model.load_state_dict(checkpoint['state_dict'])
         model.eval()  # 如果用于推理，切换到评估模式
 
         # 加载优化器状态（如果提供）
