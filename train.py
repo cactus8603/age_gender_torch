@@ -12,17 +12,25 @@ from model import TimmAgeGenderModel
 
 import torch.optim.lr_scheduler as lr_scheduler
 
+def regularization_loss(model, lambda_reg=1e-4):
+    loss = 0.0
+    for param in model.parameters():
+        if param.requires_grad:  # 仅对需要训练的参数计算正则化
+            loss += torch.sum(param ** 2) # l2 loss
+            # loss += torch.sum(torch.abs(param)) # l1 loss
+    return lambda_reg * loss
+
 # Training Loop
 def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, scaler, scheduler, writer, num_epochs=200):
 
     # load_state = True
-    # filename = './checkpoints/checkpoint_epoch_190.pth.tar'
+    # filename = './checkpoints/checkpoint_epoch_82.pth'
     # if load_state:
     #     model.load_checkpoint(filename, optimizer, scaler)
     #     print('Load pretrained model successful')
 
     start_epoch = 0
-    checkpoint_path = "./checkpoints/checkpoint.pth.tar"
+    checkpoint_path = "./checkpoints/checkpoint.pth"
 
     # Load checkpoint if available
     try:
@@ -35,11 +43,13 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
         print(f"Epoch {epoch + 1}/{num_epochs}")
         print("-" * 10)
 
-        best_epoch_loss = 999
-        best_acc_gender = 0
+        best_epoch_loss = 999.0
+        best_acc_gender = 0.0
         for phase in ['train', 'val']:
             if phase == 'train':
                 model.train()
+                for param in model.parameters():
+                    param.requires_grad = True
             else:
                 model.eval()
 
@@ -58,11 +68,12 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
 
                     with autocast():
                         gender_logits, age_logits = model(inputs)
-                        
+
                         # Compute losses
                         loss_gender = criterion_gender(gender_logits, gender_labels)
                         loss_age = criterion_age(age_logits.squeeze(), age_labels)
-                        loss = loss_gender + 0.1 * loss_age
+                        reg_loss = regularization_loss(model)
+                        loss = 100 * loss_gender + 10 * loss_age + reg_loss 
 
                     if phase == 'train':
                         scaler.scale(loss).backward()
@@ -80,6 +91,12 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
                     age_loss_sum += loss_age.item() * inputs.size(0)
 
                     pbar.update(1)
+                
+                # print training result to check
+                gender_probs = torch.softmax(gender_logits, dim=-1)
+                print(gender_labels)
+                print(gender_probs)
+                print('--------------------------')
 
             dataset_size = len(dataloaders[phase].dataset)
             epoch_loss = running_loss / dataset_size
@@ -93,11 +110,17 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
             writer.add_scalar(f"{phase} Gender Accuracy", epoch_acc_gender, epoch)
             writer.add_scalar(f"{phase} Age Loss", epoch_loss_age, epoch)
 
-            # Save checkpoint
-            if phase == 'val' and (best_epoch_loss >= epoch_loss or best_acc_gender < epoch_acc_gender):
-                if best_epoch_loss >= epoch_loss: best_epoch_loss = epoch_loss
-                if best_acc_gender < epoch_acc_gender: best_acc_gender = epoch_acc_gender
+            # Save checkpoint only if performance improves
+            if phase == 'val' and (epoch_loss < best_epoch_loss or epoch_acc_gender > best_acc_gender):
+                # Update best metrics
+                if epoch_loss < best_epoch_loss:
+                    best_epoch_loss = epoch_loss  # Update best loss
+                if epoch_acc_gender > best_acc_gender:
+                    best_acc_gender = epoch_acc_gender  # Update best accuracy
+                
+                # Save the model checkpoint
                 model.save_checkpoint(optimizer, scaler, epoch + 1, filename=checkpoint_path)
+                print(f"Checkpoint saved at epoch {epoch + 1} with Loss: {best_epoch_loss:.4f} and Gender Acc: {best_acc_gender:.4f}")
 
         # Step Scheduler
         scheduler.step()
@@ -126,7 +149,7 @@ if __name__ == '__main__':
     train_model(
         model=model,
         dataloaders=dataloaders,
-        criterion_gender=nn.CrossEntropyLoss(),
+        criterion_gender=nn.CrossEntropyLoss(), # nn.BCEWithLogitsLoss(), # 
         criterion_age=nn.MSELoss(),
         optimizer=optimizer,
         scaler=GradScaler(),
