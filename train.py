@@ -6,9 +6,10 @@ from torchvision import transforms, datasets
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import os 
 
 from dataset import get_dataloader
-from model import TimmAgeGenderModel
+from model import TimmAgeGenderModel, UncertaintyWeighting
 
 import torch.optim.lr_scheduler as lr_scheduler
 
@@ -30,14 +31,15 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
     #     print('Load pretrained model successful')
 
     start_epoch = 0
-    checkpoint_path = "./checkpoints/checkpoint.pth"
+    checkpoint_path = "./checkpoints"
+    os.makedirs(checkpoint_path, exist_ok=True)
 
     # Load checkpoint if available
-    try:
-        start_epoch = model.load_checkpoint(checkpoint_path, optimizer, scaler)[1]
-        print(f"Resuming training from epoch {start_epoch}")
-    except FileNotFoundError:
-        print("No checkpoint found, starting from scratch.")
+    # try:
+    #     start_epoch = model.load_checkpoint(checkpoint_path, optimizer, scaler)[1]
+    #     print(f"Resuming training from epoch {start_epoch}")
+    # except FileNotFoundError:
+    #     print("No checkpoint found, starting from scratch.")
 
     for epoch in range(start_epoch, num_epochs):
         print(f"Epoch {epoch + 1}/{num_epochs}")
@@ -48,60 +50,139 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
         for phase in ['train', 'val']:
             if phase == 'train':
                 model.train()
-                for param in model.parameters():
-                    param.requires_grad = True
+                for p in model.parameters():
+                    p.requires_grad = True
             else:
                 model.eval()
 
             running_loss = 0.0
             running_corrects_gender = 0
             age_loss_sum = 0.0
+            gender_loss_sum = 0.0  
 
-            # Add progress bar using tqdm
             with tqdm(total=len(dataloaders[phase]), desc=f"{phase} Epoch {epoch+1}/{num_epochs}") as pbar:
                 for batch_idx, (inputs, gender_labels, age_labels) in enumerate(dataloaders[phase]):
-                    inputs = inputs.to(device)
-                    gender_labels = gender_labels.to(device)  # Gender labels
-                    age_labels = age_labels.float().to(device)  # Age labels
-
-                    optimizer.zero_grad()
-
-                    with autocast():
-                        gender_logits, age_logits = model(inputs)
-
-                        # Compute losses
-                        loss_gender = criterion_gender(gender_logits, gender_labels)
-                        loss_age = criterion_age(age_logits.squeeze(), age_labels)
-                        reg_loss = regularization_loss(model)
-                        loss = 100 * loss_gender + 10 * loss_age + reg_loss 
+                    inputs        = inputs.to(device, non_blocking=True)
+                    gender_labels = gender_labels.to(device, non_blocking=True)         # int 類別
+                    age_labels    = age_labels.float().to(device, non_blocking=True)    # 回歸
 
                     if phase == 'train':
-                        scaler.scale(loss).backward()
-                        scaler.step(optimizer)
-                        scaler.update()
+                        optimizer.zero_grad(set_to_none=True)
 
-                        # 记录当前的学习率
-                        current_lr = optimizer.param_groups[0]['lr']
-                        writer.add_scalar("Learning Rate/train", current_lr, epoch * len(dataloaders[phase]) + batch_idx)
+                    with torch.set_grad_enabled(phase == 'train'):
+                        with autocast():
+                            gender_logits, age_logits = model(inputs)
+                            age_pred = age_logits.squeeze(-1)  # ✅ 安全擠掉最後一維
 
-                    # Statistics
+                            # losses
+                            loss_gender = criterion_gender(gender_logits, gender_labels)
+                            loss_age    = criterion_age(age_pred, age_labels)
+                            reg_loss    = regularization_loss(model)
+
+                            loss_main, weights = loss_balancer(loss_gender, loss_age)
+                            loss = loss_main + reg_loss
+
+                        if phase == 'train':
+                            scaler.scale(loss).backward()
+                            scaler.step(optimizer)
+                            scaler.update()
+
+                            # LR & 動態權重記錄（可選）
+                            if writer is not None:
+                                global_step = epoch * len(dataloaders[phase]) + batch_idx
+                                writer.add_scalar("Learning Rate/train",
+                                                optimizer.param_groups[0]['lr'], global_step)
+                                w_gender, w_age = [w.item() for w in weights]
+                                writer.add_scalar("Weights/gender", w_gender, global_step)
+                                writer.add_scalar("Weights/age",    w_age,    global_step)
+
+                    # 統計
                     running_loss += loss.item() * inputs.size(0)
-                    _, preds = torch.max(gender_logits, 1)
-                    running_corrects_gender += torch.sum(preds == gender_labels.data)
-                    age_loss_sum += loss_age.item() * inputs.size(0)
+                    preds = gender_logits.argmax(dim=1)
+                    running_corrects_gender += (preds == gender_labels).sum().item()
+                    age_loss_sum    += loss_age.item()    * inputs.size(0)
+                    gender_loss_sum += loss_gender.item() * inputs.size(0)
 
                     pbar.update(1)
-                
-                # print training result to check
-                gender_probs = torch.softmax(gender_logits, dim=-1)
-                print(gender_labels)
+
+                # Debug：看最後一個 batch 的分佈（可拿掉）
+                gender_probs = torch.softmax(gender_logits, dim=-1).detach().cpu()
+                print(gender_labels.detach().cpu())
                 print(gender_probs)
                 print('--------------------------')
 
             dataset_size = len(dataloaders[phase].dataset)
             epoch_loss = running_loss / dataset_size
-            epoch_acc_gender = running_corrects_gender.double() / dataset_size
+            epoch_acc_gender = running_corrects_gender / dataset_size
             epoch_loss_age = age_loss_sum / dataset_size
+            epoch_loss_gender = gender_loss_sum / dataset_size
+
+        # for phase in ['train', 'val']:
+        #     if phase == 'train':
+        #         model.train()
+        #         for param in model.parameters():
+        #             param.requires_grad = True
+        #     else:
+        #         model.eval()
+
+        #     running_loss = 0.0
+        #     running_corrects_gender = 0
+        #     age_loss_sum = 0.0
+
+        #     # Add progress bar using tqdm
+        #     with tqdm(total=len(dataloaders[phase]), desc=f"{phase} Epoch {epoch+1}/{num_epochs}") as pbar:
+        #         for batch_idx, (inputs, gender_labels, age_labels) in enumerate(dataloaders[phase]):
+        #             inputs = inputs.to(device)
+        #             gender_labels = gender_labels.to(device)  # Gender labels
+        #             age_labels = age_labels.float().to(device)  # Age labels
+
+        #             optimizer.zero_grad()
+
+        #             with autocast():
+        #                 gender_logits, age_logits = model(inputs)
+
+        #                 # Compute losses
+        #                 loss_gender = criterion_gender(gender_logits, gender_labels)
+        #                 loss_age = criterion_age(age_logits.squeeze(), age_labels)
+
+        #                 reg_loss = regularization_loss(model)
+        #                 loss_main, weights = loss_balancer(loss_gender, loss_age)
+        #                 loss = loss_main + reg_loss
+
+                        
+        #                 # loss = 100 * loss_gender + 10 * loss_age + reg_loss 
+
+        #             if phase == 'train':
+        #                 scaler.scale(loss).backward()
+        #                 scaler.step(optimizer)
+        #                 scaler.update()
+
+        #                 # 记录当前的学习率
+        #                 current_lr = optimizer.param_groups[0]['lr']
+        #                 writer.add_scalar("Learning Rate/train", current_lr, epoch * len(dataloaders[phase]) + batch_idx)
+        #                 # break
+        #             # Statistics
+        #             running_loss += loss.item() * inputs.size(0)
+        #             _, preds = torch.max(gender_logits, 1)
+        #             running_corrects_gender += torch.sum(preds == gender_labels.data)
+        #             age_loss_sum += loss_age.item() * inputs.size(0)
+        #             gender_loss_sum += loss_gender.item() * inputs.size(0)
+
+        #             pbar.update(1)
+        #             # break
+                
+        #         # print training result to check
+        #         gender_probs = torch.softmax(gender_logits, dim=-1)
+        #         print(gender_labels)
+        #         print(gender_probs)
+        #         print('--------------------------')
+        #         # break
+        
+
+        #     dataset_size = len(dataloaders[phase].dataset)
+        #     epoch_loss = running_loss / dataset_size
+        #     epoch_acc_gender = running_corrects_gender.double() / dataset_size
+        #     epoch_loss_age = age_loss_sum / dataset_size
 
             print(f"{phase} Loss: {epoch_loss:.4f} Gender Acc: {epoch_acc_gender:.4f} Age Loss: {epoch_loss_age:.4f}")
 
@@ -119,9 +200,10 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
                     best_acc_gender = epoch_acc_gender  # Update best accuracy
                 
                 # Save the model checkpoint
-                model.save_checkpoint(optimizer, scaler, epoch + 1, filename=checkpoint_path)
+                model.save_checkpoint(optimizer, scaler, epoch + 1, loss=epoch_loss, acc=epoch_acc_gender, save_path=checkpoint_path)
                 print(f"Checkpoint saved at epoch {epoch + 1} with Loss: {best_epoch_loss:.4f} and Gender Acc: {best_acc_gender:.4f}")
 
+            # break
         # Step Scheduler
         scheduler.step()
 
@@ -142,7 +224,13 @@ if __name__ == '__main__':
     }
     print('Load dataloader successful')
 
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    loss_balancer = UncertaintyWeighting(num_tasks=2).to(device)
+
+    # 讓 Optimizer 一起更新權重參數
+    optimizer = torch.optim.Adam(
+        list(model.parameters()) + list(loss_balancer.parameters()),
+        lr=1e-4
+    )
     scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=20, eta_min=1e-7)  # Cosine Annealing
 
     # 调用 train_model 函数

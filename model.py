@@ -1,6 +1,25 @@
 import torch
 import torch.nn as nn
 import timm
+import os
+
+class UncertaintyWeighting(nn.Module):
+    def __init__(self, num_tasks=2, init_log_vars=None):
+        super().__init__()
+        if init_log_vars is None:
+            init_log_vars = [0.0] * num_tasks  # 0 → 初始權重相近
+        self.log_vars = nn.Parameter(torch.tensor(init_log_vars, dtype=torch.float32))
+
+    def forward(self, *losses):
+        # Kendall & Gal: sum( exp(-s_i)*L_i + s_i )
+        total = 0.0
+        ws = []
+        for i, L in enumerate(losses):
+            s = self.log_vars[i]
+            w = torch.exp(-s)
+            ws.append(w)
+            total = total + w * L + s
+        return total, ws  # 回傳總 loss 與目前的權重 w_i（可記錄觀察）
 
 # Model Definition
 class TimmAgeGenderModel(nn.Module):
@@ -44,15 +63,16 @@ class TimmAgeGenderModel(nn.Module):
         return gender_logits, age_logits
 
     # Save model checkpoint
-    def save_checkpoint(self, optimizer, scaler, epoch, filename="checkpoint.pth"):
-        filename = filename.replace(".pth", f"_epoch_{epoch}.pth")
+    def save_checkpoint(self, optimizer, scaler, epoch, loss, acc, save_path):
+        # filename = filename.replace(".pth", f"_epoch_{epoch}.pth")
+        save_path = os.path.join(save_path, f'model_{epoch}_{loss:.5f}_{acc:.5f}.pth')
         torch.save({
             'state_dict': self.state_dict(),
             # 'model': self,
             'optimizer': optimizer.state_dict(),
             'scaler': scaler.state_dict(),
             'epoch': epoch
-        }, filename)
+        }, save_path)
 
     # Load model checkpoint
     @classmethod

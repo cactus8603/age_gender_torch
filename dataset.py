@@ -54,80 +54,55 @@ class AgeGenderDataset(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        return image, torch.tensor(gender_label, dtype=torch.long), torch.tensor(age_label, dtype=torch.float32)
+        return (
+            image,
+            torch.tensor(gender_label, dtype=torch.long),
+            torch.tensor(age_label, dtype=torch.float32)
+        )
 
-# Helper function to load dataset from multiple directories
-# def load_data_from_directories(directories, valid_extensions={'.jpg', '.png'}, gender_mapping=None):
-#     """
-#     Args:
-#         directories (list): List of root directories containing image data.
-#         valid_extensions (set): Set of valid image file extensions.
-#         gender_mapping (callable): Function to determine gender label from path or metadata.
-#     Returns:
-#         data_list (list): List of [image_path, gender_label, age_label].
-#     """
-#     data_list = []
-#     for directory in directories:
-#         for root, _, files in os.walk(directory):
-#             for file in files:
-#                 if os.path.splitext(file)[1].lower() in valid_extensions:
-#                     image_path = os.path.join(root, file)
-#                     # Extract gender and age from filename or metadata (example placeholder logic)
-#                     gender_label = gender_mapping(image_path) if gender_mapping else 0  # Default gender_label
-#                     age_label = random.uniform(0, 1)  # Placeholder for normalized age
-#                     data_list.append([image_path, gender_label, age_label])
-#     return data_list
+class AddGaussianNoise(object):
+    def __init__(self, mean=0., std=0.01, p=0.5):
+        self.mean = mean
+        self.std = std
+        self.p = p
 
-# Helper function to load data from CSV
-# def load_data_from_csv(csv_path):
-#     """
-#     Args:
-#         csv_path (str): Path to the CSV file.
-#     Returns:
-#         data_list (list): List of [image_path, gender_label, age_label].
-#     """
-#     data_list = []
-#     with open(csv_path, mode='r', encoding='utf-8') as file:
-#         csv_reader = csv.reader(file)
-#         next(csv_reader)  # Skip the header
-#         for row in csv_reader:
-#             if '-1' not in row and float(row[1]) < 90:  # Filtering condition
-#                 image_path = row[0]
-#                 gender_label = int(row[2])  # 0 or 1
-#                 age_label = float(row[1]) / 100.0  # Normalize age
-#                 data_list.append([image_path, gender_label, age_label])
-#     return data_list
+    def __call__(self, tensor):
+        if random.random() < self.p:
+            noise = torch.randn(tensor.size()) * self.std + self.mean
+            return tensor + noise
+        return tensor
 
-# Example gender mapping function
-# def example_gender_mapping(image_path):
-#     """Example function to determine gender based on file naming or folder structure."""
-#     if 'male' in image_path.lower():
-#         return 1
-#     elif 'female' in image_path.lower():
-#         return 0
-#     return 0
+    def __repr__(self):
+        return f"{self.__class__.__name__}(mean={self.mean}, std={self.std}, p={self.p})"
 
 # Data Augmentation and Preprocessing
 data_transforms = {
     'train': transforms.Compose([
-        transforms.ToPILImage(),  # 将 numpy.ndarray 转为 PIL.Image
-        transforms.Resize(256),  # 调整大小到 256
-        transforms.RandomHorizontalFlip(),  # 随机水平翻转
+        transforms.ToPILImage(),
+        transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomRotation(10),
         transforms.ColorJitter(
-            brightness=32.0 / 255.0,  # 随机亮度调整
-            contrast=(0.6, 1.4),  # 随机对比度调整
-            saturation=(0.6, 1.4),  # 随机饱和度调整
-            hue=0.1  # 随机色调调整
+            brightness=32.0 / 255.0,
+            contrast=(0.6, 1.4),
+            saturation=(0.6, 1.4),
+            hue=0.1
         ),
-        transforms.ToTensor(),  # 转为 PyTorch 张量
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # 标准化
+        transforms.RandomGrayscale(p=0.1),
+        transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
+        transforms.ToTensor(),
+        AddGaussianNoise(mean=0., std=0.02, p=0.5),  # 這裡加噪聲
+        transforms.Normalize([0.485, 0.456, 0.406],
+                             [0.229, 0.224, 0.225]),
     ]),
     'val': transforms.Compose([
-        transforms.ToPILImage(),  # 将 numpy.ndarray 转为 PIL.Image
-        transforms.Resize(256),  # 调整大小到 256
-        transforms.ToTensor(),  # 转为 PyTorch 张量
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # 标准化
-    ]),
+        transforms.ToPILImage(),
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406],
+                             [0.229, 0.224, 0.225]),
+    ])
 }
 
 def get_dataloader():
