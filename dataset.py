@@ -14,6 +14,8 @@ import csv
 
 from utils import get_training_data
 
+
+
 # Custom Dataset
 class AgeGenderDataset(Dataset):
     def __init__(self, data_list, transform=None):
@@ -25,6 +27,8 @@ class AgeGenderDataset(Dataset):
         """
         self.data_list = data_list
         self.transform = transform
+        self.age_mean = 25.86
+        self.age_std = 8.61
 
     def __len__(self):
         return len(self.data_list)
@@ -35,6 +39,9 @@ class AgeGenderDataset(Dataset):
         # print(image_path)
         gender_label = item[1]
         age_label = item[2]
+        catid = item[3]
+
+        age_label = (age_label - self.age_mean) / self.age_std
 
         # Load image
         image = cv2.imread(image_path)
@@ -114,13 +121,13 @@ def get_dataloader():
     val_dataset = AgeGenderDataset(val_data, transform=data_transforms['val'])
 
     # Create DataLoaders
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=96, shuffle=True, num_workers=6, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=96, shuffle=False, num_workers=6, pin_memory=True)
 
     # # Example usage
     # for images, gender_labels, age_labels in train_loader:
     #     print(images.shape, gender_labels.shape, age_labels.shape)
     #     break
 
-    return train_loader, val_loader
+    return train_loader, val_loader, train_data
 
