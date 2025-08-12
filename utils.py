@@ -57,7 +57,9 @@ def get_training_data():
         dfs.append(df)
     df = pd.concat(dfs, ignore_index=True)
 
-    # df["file"] = df["file"].astype(str)
+    age_mean = float(df["age"].mean())              # 25.86
+    age_std  = float(df["age"].std() + 1e-8)        # 8.61
+
     df = df.to_numpy().tolist()
 
     for idx, row in tqdm(enumerate(df), total=len(df)):
@@ -87,7 +89,7 @@ def get_training_data():
         ptlabel[ptid] = 1
 
         alldata_tmp.append([file_path, label, ptlabel, catid, spcatid, catname, spcatname, age])
-        alldata.append([file_path, gender, age])
+        alldata.append([file_path, gender, age, catid])
 
     totalcount = len(alldata)
     print('++++++++++++++++++++ total', totalcount)
@@ -112,4 +114,4 @@ def get_training_data():
     print("data set:", len(data_set))
     print("test set:", len(test_set))
 
-    return data_set, test_set
+    return data_set, test_set # , age_mean, age_std
