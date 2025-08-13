@@ -26,6 +26,15 @@ import re
 AGE_STD = 8.61 # 25.86
 AGE_MEAN = 25.86 # 8.61
 
+seed = 42
+
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 class SquarePad:
     def __call__(self, img):
         w, h = img.size
@@ -67,6 +76,8 @@ def predict_images(model, testfaces, model_path):
     correctgendercount = 0
     agemaearray = []
 
+    results = []
+
     imagepaths = testfaces.keys()
     pbar = tqdm(total=len(imagepaths), initial=0)
     for imagepath in imagepaths:
@@ -95,11 +106,11 @@ def predict_images(model, testfaces, model_path):
 
             with autocast():
                 g_logits, a_logits = model(x)
-                g_prob = torch.softmax(g_logits, dim=-1)[0].cpu().numpy()
+                # g_prob = torch.softmax(g_logits, dim=-1)[0].cpu().numpy()
                 age   = a_logits.squeeze(-1).item()  # 換回歲數
-            gender_idx = int(g_prob.argmax())
+                gender_idx = g_logits.argmax(dim=-1)  
             age = age * 8.61 + 25.86
-            age = age * 100
+            age *= 100
 
             # cv2.imwrite('faceimag.jpg', faceimag)
             
@@ -109,7 +120,7 @@ def predict_images(model, testfaces, model_path):
             # _age = _age[0][0] * 100 # age
             # print(gender_idx, gtgen)
             
-            if gender_idx == 1 and gtgen > 0: # man
+            if gender_idx > 0 and gtgen > 0: # man
                 correctgendercount += 1
             elif gender_idx == 0 and gtgen == 0: # woman
                 correctgendercount += 1
@@ -118,12 +129,29 @@ def predict_images(model, testfaces, model_path):
             agemae = abs(age - gtage)
             # print(age, gtage)
             agemaearray.append(agemae)
+
+            results.append({
+                "filename": imagepath,
+                "bbox_x": fx,
+                "bbox_y": fy,
+                "bbox_w": fw,
+                "bbox_h": fh,
+                "gender": gender_idx,        # 0/1（依你的定義）
+                "age": age
+            })
+
             #print(_gender, gtgen, _age, gtage, agemae)
         pbar.update(1) # update
+
+    with open("output.csv", mode="w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=results[0].keys())
+        writer.writeheader()
+        writer.writerows(results)
+
     test_accuracy = correctgendercount / totalfacecount
     test_mae = np.mean(agemaearray)
     with open('accuracy.txt', 'a') as file:
-        otxt = '%s %f %f\n' % (model, test_accuracy, test_mae)
+        otxt = '%s %f %f\n' % (model_path, test_accuracy, test_mae)
         file.write(otxt)
     # print(test_accuracy, test_mae)
 
@@ -156,7 +184,7 @@ def predict_images(model, testfaces, model_path):
 if __name__ == '__main__':
     gtdata = load_csv('./gtdata/gtdata_combine.csv')
 
-    model = TimmAgeGenderModel(model_name='efficientformerv2_s1', phase="val") # mobilenetv3_small_100
+    model = TimmAgeGenderModel(model_name='mobilenetv3_large_100.ra_in1k') # mobilenetv3_small_100 efficientformerv2_s1
     # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     # model.to(device)
     
@@ -168,10 +196,12 @@ if __name__ == '__main__':
             testfaces[filename] = []
         testfaces[filename].append(gd[1:])
 
-    model_paths = glob.glob('./checkpoints/epoch*.pth')
+    # model_paths = glob.glob('./pretrain/*.pth')
+    model_paths = glob.glob('./checkpoints/*.pth')
     model_paths.sort()
     # for n in range(len(models)):
     #     models[n] = os.path.splitext(models[n])[0]
 
     for model_path in model_paths:
+        print(model_path)
         predict_images(model, testfaces, model_path)
