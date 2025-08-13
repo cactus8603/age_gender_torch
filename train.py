@@ -46,18 +46,23 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
         print(f"Epoch {epoch + 1}/{num_epochs}")
         print("-" * 10)
 
-        if epoch < 3:
+        if epoch < 5:
             for param in model.backbone.parameters():
                 param.requires_grad = False
 
             # 確保 head 可訓練
             for param in model.gender_head.parameters():
-                param.requires_grad = True
+                param.requires_grad = False
             for param in model.age_head.parameters():
                 param.requires_grad = True
 
         else:
             for param in model.parameters():
+                param.requires_grad = False
+            # 確保 head 可訓練
+            for param in model.gender_head.parameters():
+                param.requires_grad = True
+            for param in model.age_head.parameters():
                 param.requires_grad = True
 
         best_epoch_loss = 999.0
@@ -92,10 +97,12 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
                             # losses
                             loss_gender = criterion_gender(gender_logits, gender_labels)
                             loss_age    = criterion_age(age_pred, age_labels)
-                            reg_loss    = regularization_loss(model)
+                            # reg_loss    = regularization_loss(model)
+                            # loss = loss_age + reg_loss
 
-                            loss_main, weights = loss_balancer(loss_gender, loss_age)
-                            loss = loss_main + reg_loss
+                            loss, weights = loss_balancer(loss_gender, loss_age)
+                            # loss = loss_main + reg_loss
+                            # loss = 1*loss_gender + 100*loss_age + reg_loss
 
                         if phase == 'train':
                             scaler.scale(loss).backward()
@@ -121,9 +128,9 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
                     pbar.update(1)
 
                 # Debug：看最後一個 batch 的分佈（可拿掉）
-                gender_probs = torch.softmax(gender_logits, dim=-1).detach().cpu()
-                print(gender_labels.detach().cpu())
-                print(gender_probs)
+                # gender_probs = torch.softmax(gender_logits, dim=-1).detach().cpu()
+                # print(gender_labels.detach().cpu())
+                # print(gender_probs)
                 print('--------------------------')
 
             dataset_size = len(dataloaders[phase].dataset)
@@ -133,7 +140,7 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
             epoch_loss_gender = gender_loss_sum / dataset_size
 
 
-            print(f"{phase} Loss: {epoch_loss:.4f} Gender Acc: {epoch_acc_gender:.4f} Age Loss: {epoch_loss_age:.4f}")
+            print(f"{phase} Loss: {epoch_loss_gender*w_gender:.4f} Gender Acc: {epoch_acc_gender:.4f} Age Loss: {epoch_loss_age*w_age:.4f}")
 
             # Write metrics to TensorBoard
             writer.add_scalar(f"{phase} Loss", epoch_loss, epoch)
@@ -162,9 +169,12 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
 if __name__ == '__main__':
 
     # Training Configuration
-    model = TimmAgeGenderModel(model_name='efficientformerv2_s1', phase="train") # mobilenetv3_small_100
+    model = TimmAgeGenderModel(model_name='mobilenetv3_large_100.ra_in1k') # mobilenetv3_small_100 efficientformerv2_s1
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model = model.load_checkpoint('pretrain/92.4_9.91.pth', device=device)
     model = model.to(device)
+
+    # model.init_heads()
 
     train_loader, val_loader, train_list = get_dataloader()
     dataloaders = {
@@ -187,7 +197,8 @@ if __name__ == '__main__':
     # 讓 Optimizer 一起更新權重參數
     optimizer = torch.optim.Adam(
         list(model.parameters()) + list(loss_balancer.parameters()),
-        lr=5e-5
+        lr=1e-4,
+        weight_decay=1e-4
     )
     scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=20, eta_min=1e-7)  # Cosine Annealing
 
@@ -196,7 +207,7 @@ if __name__ == '__main__':
         model=model,
         dataloaders=dataloaders,
         criterion_gender=criterion_gender, # nn.BCEWithLogitsLoss(), # 
-        criterion_age=nn.SmoothL1Loss(beta=0.1), # nn.MSELoss(),
+        criterion_age=nn.SmoothL1Loss(beta=0.01), # nn.MSELoss(),
         optimizer=optimizer,
         scaler=GradScaler(),
         scheduler=scheduler,
