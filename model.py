@@ -4,15 +4,44 @@ from collections import OrderedDict
 
 import torch.nn.functional as F
 
+# class UncertaintyWeighting(nn.Module):
+#     def __init__(self, num_tasks=2, init_log_vars=[0.0, -2.0]):
+#         super().__init__()
+#         if init_log_vars is None:
+#             init_log_vars = [0.0] * num_tasks  # 0 → 初始權重相近
+#         self.log_vars = nn.Parameter(torch.tensor(init_log_vars, dtype=torch.float32))
+
+#     def forward(self, *losses):
+#         # Kendall & Gal: sum( exp(-s_i)*L_i + s_i )
+#         total = 0.0
+#         ws = []
+#         for i, L in enumerate(losses):
+#             s = self.log_vars[i]
+#             w = torch.exp(-s)
+#             ws.append(w)
+#             total = total + w * L + s
+#         return total, ws  # 回傳總 loss 與目前的權重 w_i（可記錄觀察）
+
 class UncertaintyWeighting(nn.Module):
-    def __init__(self, num_tasks=2, init_log_vars=[0.0, -2.0]):
+    def __init__(self, num_tasks=2, init_log_vars=None, auto_init=True):
         super().__init__()
+        self.auto_init = auto_init
+        self.initialized = not auto_init  # 如果不自動初始化就直接完成
         if init_log_vars is None:
-            init_log_vars = [0.0] * num_tasks  # 0 → 初始權重相近
+            init_log_vars = [0.0] * num_tasks
         self.log_vars = nn.Parameter(torch.tensor(init_log_vars, dtype=torch.float32))
 
     def forward(self, *losses):
-        # Kendall & Gal: sum( exp(-s_i)*L_i + s_i )
+        # 第一次 forward 時，自動根據 loss 大小設定 log_vars
+        if self.auto_init and not self.initialized:
+            with torch.no_grad():
+                # 用 loss 比例決定 log_vars（Kendall & Gal 初始化技巧）
+                base_loss = losses[0].detach()
+                for i in range(len(losses)):
+                    ratio = losses[i].detach() / (base_loss + 1e-8)
+                    self.log_vars[i] = torch.log(ratio)
+            self.initialized = True
+
         total = 0.0
         ws = []
         for i, L in enumerate(losses):
@@ -20,106 +49,155 @@ class UncertaintyWeighting(nn.Module):
             w = torch.exp(-s)
             ws.append(w)
             total = total + w * L + s
-        return total, ws  # 回傳總 loss 與目前的權重 w_i（可記錄觀察）
+        return total, ws
+
+class ResBlock(nn.Module):
+    def __init__(self, dim, hidden, drop=0.2, act=nn.SiLU):
+        super().__init__()
+        self.fc1 = nn.Linear(dim, hidden)
+        self.fc2 = nn.Linear(hidden, dim)
+        self.ln  = nn.LayerNorm(dim)
+        self.act = act()
+        self.drop = nn.Dropout(drop)
+
+        nn.init.kaiming_normal_(self.fc1.weight, nonlinearity='relu')
+        nn.init.zeros_(self.fc1.bias)
+        nn.init.kaiming_normal_(self.fc2.weight, nonlinearity='relu')
+        nn.init.zeros_(self.fc2.bias)
+
+    def forward(self, x):
+        h = self.act(self.fc1(x))
+        h = self.drop(h)
+        h = self.fc2(h)
+        return self.ln(x + h)
+
+# ---- Age head：A) 殘差 MLP 版本（預設） ----
+class AgeHeadResMLP(nn.Module):
+    def __init__(self, in_dim, width=512, depth=3, drop=0.2, act=nn.SiLU):
+        super().__init__()
+        self.in_proj = nn.Sequential(
+            nn.LayerNorm(in_dim),
+            nn.Linear(in_dim, width),
+            act(), nn.Dropout(drop),
+        )
+        nn.init.kaiming_normal_(self.in_proj[1].weight, nonlinearity='relu')
+        nn.init.zeros_(self.in_proj[1].bias)
+
+        self.blocks = nn.Sequential(*[
+            ResBlock(width, width*2, drop=drop, act=act) for _ in range(depth)
+        ])
+
+        self.out = nn.Sequential(
+            nn.Linear(width, width//2), act(), nn.Dropout(drop),
+            nn.Linear(width//2, 1)  # 線性輸出（配 z-score 使用）
+        )
+        for m in self.out:
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+                if m.bias is not None: nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        x = self.in_proj(x)
+        x = self.blocks(x)
+        return self.out(x)  # [B, 1]
+
+class GenderHeadResMLP(nn.Module):
+    def __init__(self, in_dim, width=512, depth=2, drop=0.2, act=nn.SiLU):
+        super().__init__()
+        self.in_proj = nn.Sequential(
+            nn.LayerNorm(in_dim),
+            nn.Linear(in_dim, width),
+            act(), nn.Dropout(drop),
+        )
+        nn.init.kaiming_normal_(self.in_proj[1].weight, nonlinearity='relu'); nn.init.zeros_(self.in_proj[1].bias)
+
+        self.blocks = nn.Sequential(*[ResBlock(width, width*2, drop, act) for _ in range(depth)])
+
+        self.out = nn.Sequential(
+            nn.Linear(width, width//2), act(), nn.Dropout(drop),
+            nn.Linear(width//2, 2)   # ← 2 類 logits，搭配 CrossEntropyLoss
+        )
+        for m in self.out:
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+                if m.bias is not None: nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        x = self.in_proj(x)
+        x = self.blocks(x)
+        return self.out(x)  # [B, 2]
+
+def _init_all_linear(m):
+    if isinstance(m, nn.Linear):
+        nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+
 
 class TimmAgeGenderModel(nn.Module):
     def __init__(
         self,
-        model_name='mobilenetv3_small_100.lamb_in1k',
+        model_name='mobilenetv3_large_100.ra_in1k',
         pretrained=True,
-        head_hidden=128,
+        head_hidden=256,
         out_indices=(4),   # 前中後多層
-        fuse_dim=128, 
-        dropout=0.2,
+        fuse_dim=256, 
+        dropout=0.4,
         num_classes_gender=2,
         age_activation=None,  # 用年齡標準化就用 linear 輸出
-        phase="val",
     ):
         super().__init__()
 
-        self.backbone = timm.create_model(
-            model_name, pretrained=pretrained,
-            features_only=True, out_indices=out_indices
-        )
-        chs = self.backbone.feature_info.channels()  # 各 stage 的通道數
-       
-        # 將各層: GAP → 1x1 conv 對齊到 fuse_dim
-        self.pools = nn.ModuleList([nn.AdaptiveAvgPool2d(1) for _ in chs])
-        self.projs = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(c, fuse_dim, kernel_size=1, bias=False),
-                nn.BatchNorm2d(fuse_dim),
-                nn.SiLU(inplace=True)
-            ) for c in chs
-        ])
-        fused_dim = fuse_dim * len(chs)
+        self.backbone = timm.create_model(model_name, pretrained=pretrained,
+                                          num_classes=0, global_pool='avg')
 
-        # self.backbone = timm.create_model(model_name, pretrained=pretrained,
-        #                                   num_classes=0, global_pool='avg')
+        # ---- 這裡用 dummy forward 探測實際輸出維度 C_real ----
+        self.img_size = 224
+        with torch.no_grad():
+            # 從 default_cfg 取輸入尺寸，取不到就用 img_size
+            cfg = getattr(self.backbone, 'default_cfg', {})
+            H = cfg.get('input_size', (3, self.img_size, self.img_size))[1]
+            dummy = torch.zeros(1, 3, H, H)
+            out = self.backbone(dummy)
+            C = out.shape[-1]          # ← 以實際輸出維度為準（避免 576/1024 不一致）
+
         # C = self.backbone.num_features
 
-        # Gender head（建議：head LR > backbone LR）
-        self.gender_head = nn.Sequential(
-            nn.Linear(fused_dim, head_hidden, bias=False),
-            nn.BatchNorm1d(head_hidden),
+        self.pre_norm = nn.LayerNorm(C)
+
+        self.trunk = nn.Sequential(
+            nn.Linear(C, head_hidden),
             nn.SiLU(),
             nn.Dropout(dropout),
-            nn.Linear(head_hidden, head_hidden // 2),
-            nn.SiLU(),
-            nn.Dropout(dropout),
-            nn.Linear(head_hidden // 2, 2)
+            ResBlock(head_hidden, hidden=head_hidden*2, drop=dropout)  # 1 個就很有感
         )
+
+        # Gender head（建議：head LR > backbone LR）
+        self.gender_head = GenderHeadResMLP(head_hidden, width=256, depth=3, drop=dropout)
 
 
         # Age head
-        self.age_head = nn.Sequential(
-            nn.Linear(fused_dim, head_hidden),
-            nn.SiLU(),
-            nn.Dropout(dropout),
-            nn.Linear(head_hidden, 1)   # raw linear，配 z-score 使用
-        )
+        self.age_head = AgeHeadResMLP(head_hidden, width=256, depth=3, drop=dropout)
 
         self._shape_checked = False  # 只在第一次 forward 印 shape
-   
-        if phase == "train":
-            self._init_heads()
 
 
-    def _init_heads(self):
-        def _init_head(m):
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, nonlinearity='relu')  # fan_in, ReLU 專用
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
-        self.gender_head.apply(_init_head)
-        self.age_head.apply(_init_head)
+    def init_heads(self):
+        # 只初始化 heads（常見於用 ImageNet backbone 微調）
+        self.gender_head.apply(_init_all_linear)
+        self.age_head.apply(_init_all_linear)
 
-    def fuse_multi_level(self, x):
-        feats = self.backbone(x)                 # list of [B,Ci,Hi,Wi]
-        vecs = []
-        for f, pool, proj in zip(feats, self.pools, self.projs):
-            v = proj(pool(f)).flatten(1)         # [B, fuse_dim]
-            vecs.append(v)
-        fused = torch.cat(vecs, dim=1)           # [B, fuse_dim * L]
-        return fused
 
 
     def forward(self, x):
-        # feat_map = self.backbone.forward_features(x)     # [B, C, H, W]
-        # feats = F.adaptive_avg_pool2d(feat_map, 1).flatten(1)  # → [B, C]
-        # # if not self._shape_checked:
-        # #     print("feats:", feats.shape, "in_features:", self.in_features)
-        # #     self._shape_checked = True
-        # gender_logits = self.gender_head(feats)
-        # age_logits = self.age_head(feats)
-        # return gender_logits, age_logits
+        f = self.backbone(x)           # [B, C]
+        f = self.pre_norm(f)
+        h = self.trunk(f)              # [B, H]
 
-        fused = self.fuse_multi_level(x)
-        gender_logits = self.gender_head(fused)
-        age_logits = self.age_head(fused)           # [B,1]（標準化標籤用這個算 loss）
+        g = self.gender_head(h)
+        a = self.age_head(h)
 
-        return gender_logits, age_logits
-
+        return g, a
 
     # ---- Save / Load ----
     def save_checkpoint(self, optimizer, scaler, epoch, loss, acc, dir_path,
@@ -154,12 +232,14 @@ class TimmAgeGenderModel(nn.Module):
         # cfg  = ckpt.get('config', {})  # 若舊檔沒 config 就用預設
         model = cls().to(device)
 
-        sd = ckpt.get('state_dict') or ckpt.get('model') or ckpt.get('model_state')
-        if sd is None:
-            raise ValueError('No model weights in checkpoint')
+        sd = ckpt['state_dict'] if 'state_dict' in ckpt else ckpt
+        # if sd is None:
+        #     raise ValueError('No model weights in checkpoint')
         # 移除 DataParallel 的 "module."
         # new_sd = OrderedDict((k[7:], v) if k.startswith('module.') else (k, v) for k,v in sd.items())
-        # model.load_state_dict(new_sd, strict=False)
+        # print(filename)
+        model.load_state_dict(sd, strict=True)
+        
         model.eval()
 
         if optimizer is not None and ckpt.get('optimizer') is not None:
