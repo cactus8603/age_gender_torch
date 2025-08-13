@@ -30,6 +30,14 @@ class AgeGenderDataset(Dataset):
         self.age_mean = 25.86
         self.age_std = 8.61
 
+        self.afad_transform = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize(224),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406],
+                                [0.229, 0.224, 0.225]),
+        ])
+
     def __len__(self):
         return len(self.data_list)
 
@@ -52,13 +60,16 @@ class AgeGenderDataset(Dataset):
         image = cv2.resize(image, (224, 224))
 
         # 转换为 one-hot 向量
-        if gender_label == 1:  # 男性
-            gender_label_onehot = [1.0, 0.0]
-        else:  # 女性
-            gender_label_onehot = [0.0, 1.0]
+        # if gender_label == 1:  # 男性
+        #     gender_label_onehot = [1.0, 0.0]
+        # else:  # 女性
+        #     gender_label_onehot = [0.0, 1.0]
 
         # Apply transformations
-        if self.transform:
+        is_afad = 'afad' in image_path.lower()
+        if is_afad:
+            image = self.afad_transform(image)
+        elif self.transform:
             image = self.transform(image)
 
         return (
@@ -86,21 +97,22 @@ class AddGaussianNoise(object):
 data_transforms = {
     'train': transforms.Compose([
         transforms.ToPILImage(),
-        transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
+        transforms.RandomResizedCrop(224, scale=(0.6, 1.0)),  # 裁剪範圍更大
         transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(10),
+        transforms.RandomRotation(20),  # 旋轉角度加大
+        transforms.RandomPerspective(distortion_scale=0.3, p=0.5),  # 隨機透視變形
         transforms.ColorJitter(
-            brightness=32.0 / 255.0,
-            contrast=(0.6, 1.4),
-            saturation=(0.6, 1.4),
-            hue=0.1
+            brightness=(0.5, 1.5),  # 更廣亮度變化
+            contrast=(0.5, 1.5),
+            saturation=(0.5, 1.5),
+            hue=0.2
         ),
-        transforms.RandomGrayscale(p=0.1),
-        transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
+        transforms.RandomGrayscale(p=0.2),  # 灰階機率略升
+        transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.5)),  # sigma範圍加大
         transforms.ToTensor(),
-        AddGaussianNoise(mean=0., std=0.02, p=0.5),  # 這裡加噪聲
+        AddGaussianNoise(mean=0., std=0.03, p=0.7),  # 噪聲稍強
         transforms.Normalize([0.485, 0.456, 0.406],
-                             [0.229, 0.224, 0.225]),
+                            [0.229, 0.224, 0.225]),
     ]),
     'val': transforms.Compose([
         transforms.ToPILImage(),
