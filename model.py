@@ -137,12 +137,12 @@ def _init_all_linear(m):
 class TimmAgeGenderModel(nn.Module):
     def __init__(
         self,
-        model_name='mobilenetv3_large_100.ra_in1k',
+        model_name='convnextv2_tiny',
         pretrained=True,
         head_hidden=256,
         out_indices=(4),   # 前中後多層
         fuse_dim=256, 
-        dropout=0.4,
+        dropout=0.2,
         num_classes_gender=2,
         age_activation=None,  # 用年齡標準化就用 linear 輸出
     ):

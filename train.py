@@ -52,13 +52,13 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
 
             # 確保 head 可訓練
             for param in model.gender_head.parameters():
-                param.requires_grad = False
+                param.requires_grad = True
             for param in model.age_head.parameters():
                 param.requires_grad = True
 
         else:
             for param in model.parameters():
-                param.requires_grad = False
+                param.requires_grad = True
             # 確保 head 可訓練
             for param in model.gender_head.parameters():
                 param.requires_grad = True
@@ -169,9 +169,9 @@ def train_model(model, dataloaders, criterion_gender, criterion_age, optimizer, 
 if __name__ == '__main__':
 
     # Training Configuration
-    model = TimmAgeGenderModel(model_name='mobilenetv3_large_100.ra_in1k') # mobilenetv3_small_100 efficientformerv2_s1
+    model = TimmAgeGenderModel(model_name='convnextv2_tiny') # mobilenetv3_small_100 efficientformerv2_s1 mobilenetv3_large_100.ra_in1k
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model = model.load_checkpoint('pretrain/92.4_9.91.pth', device=device)
+    # model = model.load_checkpoint('pretrain_eff/best_.pth', device=device)
     model = model.to(device)
 
     # model.init_heads()
@@ -189,7 +189,7 @@ if __name__ == '__main__':
 
     criterion_gender = nn.CrossEntropyLoss(
         weight=class_weights,           # 不平衡就留著；平衡就設 None
-        label_smoothing=0.05            # 避免過度自信
+        label_smoothing=0.1            # 避免過度自信
     )
     
     loss_balancer = UncertaintyWeighting(num_tasks=2).to(device)
@@ -197,10 +197,10 @@ if __name__ == '__main__':
     # 讓 Optimizer 一起更新權重參數
     optimizer = torch.optim.Adam(
         list(model.parameters()) + list(loss_balancer.parameters()),
-        lr=1e-4,
-        weight_decay=1e-4
+        lr=2e-4,
+        weight_decay=1e-3
     )
-    scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=20, eta_min=1e-7)  # Cosine Annealing
+    scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=50, eta_min=1e-7)  # Cosine Annealing
 
     # 调用 train_model 函数
     train_model(

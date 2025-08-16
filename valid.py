@@ -182,9 +182,9 @@ def predict_images(model, testfaces, model_path):
     # return results
 
 if __name__ == '__main__':
-    gtdata = load_csv('./gtdata/gtdata_combine.csv')
+    gtdata = load_csv('./output_csv/gtdata_combine.csv')
 
-    model = TimmAgeGenderModel(model_name='mobilenetv3_large_100.ra_in1k') # mobilenetv3_small_100 efficientformerv2_s1
+    model = TimmAgeGenderModel(model_name='convnextv2_tiny') # mobilenetv3_small_100 efficientformerv2_s1
     # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     # model.to(device)
     
@@ -196,7 +196,7 @@ if __name__ == '__main__':
             testfaces[filename] = []
         testfaces[filename].append(gd[1:])
 
-    # model_paths = glob.glob('./pretrain/*.pth')
+    # model_paths = glob.glob('./pretrain_eff/best.pth')
     model_paths = glob.glob('./checkpoints/*.pth')
     model_paths.sort()
     # for n in range(len(models)):
